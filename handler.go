@@ -29,7 +29,6 @@ func SetFrontAsset(assets embed.FS, o Opt) {
 }
 
 func SetOption(o Opt) {
-	mode = Release
 	opt = o
 }
 

@@ -1,4 +1,4 @@
-module github.com/shibukawa/frontend-go
+module github.com/seamusv/frontend-go
 
 go 1.18
 

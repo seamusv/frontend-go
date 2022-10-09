@@ -49,7 +49,7 @@ func startDevServer(ctx context.Context, folder, cmdStr string) (d *devServer, h
 	stdout, _ := cmd.StdoutPipe()
 	ch := make(chan string)
 	go func() {
-		re := regexp.MustCompile(`(http://[0-9A-Za-z.]+:\d+)`)
+		re := regexp.MustCompile(`(http(s)?://[0-9A-Za-z.]+:\d+)`)
 		foundPort := false
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
