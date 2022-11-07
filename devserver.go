@@ -47,6 +47,7 @@ func startDevServer(ctx context.Context, folder, cmdStr string) (d *devServer, h
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 	cmd.Dir = folder
 	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
 	ch := make(chan string)
 	go func() {
 		re := regexp.MustCompile(`(http(s)?://[0-9A-Za-z.]+:\d+)`)
@@ -60,6 +61,12 @@ func startDevServer(ctx context.Context, folder, cmdStr string) (d *devServer, h
 					foundPort = true
 				}
 			}
+			fmt.Println(scanner.Text())
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
 			fmt.Println(scanner.Text())
 		}
 	}()
