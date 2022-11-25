@@ -13,9 +13,13 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
-var ErrDir = errors.New("path is dir")
+var (
+	ErrDir              = errors.New("path is dir")
+	ErrNoFrontendFolder = errors.New("no frontend folder")
+)
 
 var mode Mode = Development
 
@@ -32,9 +36,30 @@ func SetOption(o Opt) {
 	opt = o
 }
 
-func tryRead(prefix, requestedPath string, w http.ResponseWriter) error {
+func tryRead(prefix, requestedPath string, w http.ResponseWriter, r *http.Request) error {
 	f, err := frontAssets.Open(path.Join(prefix, requestedPath))
 	if err != nil {
+		if paths := strings.Split(strings.TrimPrefix(requestedPath, "/"), "/"); len(paths) > 1 {
+			f, err := frontAssets.Open(path.Join(prefix, paths[0]))
+			if err != nil {
+				// if not found, return nil to use index.html
+				return nil
+			}
+			defer f.Close()
+			fi, err := f.Stat()
+			if err != nil {
+				// should never error, but return nil to use index.html
+				return nil
+			}
+			if fi.IsDir() {
+				return ErrNoFrontendFolder
+			}
+			// may be a hack attack to sniff files, but return nil to use index.html
+			return nil
+		}
+		if requestedPath == "/favicon.ico" {
+			return ErrNoFrontendFolder
+		}
 		return err
 	}
 	defer f.Close()
@@ -43,6 +68,10 @@ func tryRead(prefix, requestedPath string, w http.ResponseWriter) error {
 	// But it is not needed here
 	stat, _ := f.Stat()
 	if stat.IsDir() {
+		if !strings.HasSuffix(requestedPath, "/") {
+			http.Redirect(w, r, requestedPath+"/", http.StatusTemporaryRedirect)
+			return nil
+		}
 		return ErrDir
 	}
 
@@ -58,28 +87,46 @@ func tryRead(prefix, requestedPath string, w http.ResponseWriter) error {
 //
 //	h, err := NewSPAHandler(ctx)
 //	http.Handle("/", h)
-func NewSPAHandler(ctx context.Context) (http.Handler, error) {
+func NewSPAHandler(ctx context.Context, indexMiddleware func(handler http.Handler) http.Handler) (http.Handler, error) {
+	if indexMiddleware == nil {
+		indexMiddleware = func(handler http.Handler) http.Handler {
+			return handler
+		}
+	}
 	var handler http.Handler
 	switch mode {
 	case Release:
 		o := normalizeRelOpt(opt)
 		root := path.Join(o.FrontEndFolderPath, o.DistFolder)
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			err := tryRead(root, r.URL.Path, w)
+			err := tryRead(root, r.URL.Path, w, r)
 			if err == nil {
 				return
 			}
-			if o.FrameworkType == NextJS {
-				// SSG generates .html but request URL may not have extensions
-				err = tryRead(root, r.URL.Path+".html", w)
+			if errors.Is(err, ErrNoFrontendFolder) {
+				http.NotFound(w, r)
+				return
+			}
+			if errors.Is(err, ErrDir) {
+				err = tryRead(root, filepath.Join(r.URL.Path, "index.html"), w, r)
 				if err == nil {
 					return
 				}
 			}
-			err = tryRead(root, "index.html", w)
-			if err != nil {
-				panic(err)
+			if o.FrameworkType == NextJS {
+				// SSG generates .html but request URL may not have extensions
+				err = tryRead(root, r.URL.Path+".html", w, r)
+				if err == nil {
+					return
+				}
 			}
+			indexMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				err := tryRead(root, "index.html", w, r)
+				if err != nil {
+					log.Println(err)
+					http.NotFound(w, r)
+				}
+			})).ServeHTTP(w, r)
 		})
 	case Development:
 		o, err := normalizeDevOpt(".", opt)
@@ -118,8 +165,8 @@ func NewSPAHandler(ctx context.Context) (http.Handler, error) {
 //	r := chi.NewRouter()
 //	c, err := NewSPAHandlerFunc(ctx)
 //	http.NotFound(h)
-func NewSPAHandlerFunc(ctx context.Context) (http.HandlerFunc, error) {
-	h, err := NewSPAHandler(ctx)
+func NewSPAHandlerFunc(ctx context.Context, indexMiddleware func(handler http.Handler) http.Handler) (http.HandlerFunc, error) {
+	h, err := NewSPAHandler(ctx, indexMiddleware)
 	if err != nil {
 		return nil, err
 	}
@@ -129,8 +176,8 @@ func NewSPAHandlerFunc(ctx context.Context) (http.HandlerFunc, error) {
 }
 
 // MustNewSPAHandler is similar to [NewSPAHandler] but this calls panic when error.
-func MustNewSPAHandler(ctx context.Context) http.Handler {
-	h, err := NewSPAHandler(ctx)
+func MustNewSPAHandler(ctx context.Context, indexMiddleware func(handler http.Handler) http.Handler) http.Handler {
+	h, err := NewSPAHandler(ctx, indexMiddleware)
 	if err != nil {
 		panic(err)
 	}
@@ -138,8 +185,8 @@ func MustNewSPAHandler(ctx context.Context) http.Handler {
 }
 
 // MustNewSPAHandlerFunc is similar to [NewSPAHandlerFunc] but this calls panic when error.
-func MustNewSPAHandlerFunc(ctx context.Context) http.HandlerFunc {
-	h, err := NewSPAHandlerFunc(ctx)
+func MustNewSPAHandlerFunc(ctx context.Context, indexMiddleware func(handler http.Handler) http.Handler) http.HandlerFunc {
+	h, err := NewSPAHandlerFunc(ctx, indexMiddleware)
 	if err != nil {
 		panic(err)
 	}
