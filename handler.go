@@ -32,6 +32,31 @@ func SetOption(o Opt) {
 	opt = o
 }
 
+type FallbackInterceptor func(r *http.Request, reader io.Reader) io.Reader
+
+var fallbackInterceptor FallbackInterceptor = func(r *http.Request, reader io.Reader) io.Reader {
+	return reader
+}
+
+func SetFallbackInterceptor(f FallbackInterceptor) {
+	fallbackInterceptor = f
+}
+
+func open(prefix, requestedPath string) (io.ReadCloser, error) {
+	f, err := frontAssets.Open(path.Join(prefix, requestedPath))
+	if err != nil {
+		return nil, err
+	}
+
+	stat, _ := f.Stat()
+	if stat.IsDir() {
+		_ = f.Close()
+		return nil, ErrDir
+	}
+
+	return f, nil
+}
+
 func tryRead(prefix, requestedPath string, w http.ResponseWriter) error {
 	f, err := frontAssets.Open(path.Join(prefix, requestedPath))
 	if err != nil {
@@ -76,8 +101,11 @@ func NewSPAHandler(ctx context.Context) (http.Handler, error) {
 					return
 				}
 			}
-			err = tryRead(root, "index.html", w)
-			if err != nil {
+			if f, err := open(root, "index.html"); err == nil {
+				defer f.Close()
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = io.Copy(w, fallbackInterceptor(r, f))
+			} else {
 				panic(err)
 			}
 		})
