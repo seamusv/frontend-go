@@ -61,7 +61,14 @@ func startDevServer(ctx context.Context, folder, cmdStr string) (d *devServer, h
 					foundPort = true
 				}
 			}
-			fmt.Println(scanner.Text())
+			line := scanner.Text()
+			if strings.HasPrefix(line, "  ➜  Local") {
+				return
+			}
+			if strings.HasPrefix(line, "  ➜  Network") {
+				return
+			}
+			fmt.Println(line)
 		}
 	}()
 	go func() {
